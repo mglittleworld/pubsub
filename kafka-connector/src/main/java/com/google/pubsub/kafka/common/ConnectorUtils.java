@@ -27,6 +27,7 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 /** Utility methods and constants that are repeated across one or more classes. */
 public class ConnectorUtils {
@@ -42,15 +43,17 @@ public class ConnectorUtils {
   public static final String CPS_TOPIC_CONFIG = "cps.topic";
   public static final String CPS_MESSAGE_KEY_ATTRIBUTE = "key";
   public static final String KAFKA_MESSAGE_CPS_BODY_FIELD = "message";
-  public static final String KAFKA_TOPIC_ATTRIBUTE = "kafka.topic";
-  public static final String KAFKA_PARTITION_ATTRIBUTE = "kafka.partition";
-  public static final String KAFKA_OFFSET_ATTRIBUTE = "kafka.offset";
-  public static final String KAFKA_TIMESTAMP_ATTRIBUTE = "kafka.timestamp";
 
   /** Return {@link io.grpc.Channel} which is used by Cloud Pub/Sub gRPC API's. */
   public static Channel getChannel() throws IOException {
-    ManagedChannel channelImpl =
-        NettyChannelBuilder.forAddress(ENDPOINT, 443).negotiationType(NegotiationType.TLS).build();
+    ManagedChannel channelImpl = null;
+    try {
+      channelImpl =
+              NettyChannelBuilder.forAddress(ENDPOINT, 443).negotiationType(NegotiationType.TLS).
+                      keepAliveWithoutCalls(true).build();
+    } catch (Exception e) {
+      System.out.println(e);
+    }
     final ClientAuthInterceptor interceptor =
         new ClientAuthInterceptor(
             GoogleCredentials.getApplicationDefault().createScoped(CPS_SCOPE),

@@ -1,5 +1,5 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-  xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
   <modelVersion>4.0.0</modelVersion>
   <groupId>com.google.pubsub.kafka.connect</groupId>
   <artifactId>kafka-connector</artifactId>
@@ -9,7 +9,7 @@
   <properties>
     <maven.compiler.source>1.7</maven.compiler.source>
     <maven.compiler.target>1.7</maven.compiler.target>
-</properties>
+  </properties>
 
   <dependencies>
     <dependency>
@@ -21,29 +21,39 @@
     <dependency>
       <groupId>io.grpc</groupId>
       <artifactId>grpc-all</artifactId>
-      <version>1.6.1</version>
+      <version>1.10.0</version>
     </dependency>
+    <!--<dependency>-->
+    <!--<groupId>io.grpc</groupId>-->
+    <!--<artifactId>grpc-all</artifactId>-->
+    <!--<version>1.6.1</version>-->
+    <!--</dependency>-->
     <dependency>
       <groupId>io.netty</groupId>
       <artifactId>netty-tcnative-boringssl-static</artifactId>
-      <version>2.0.3.Final</version>
-      <classifier>${os.detected.classifier}</classifier>
+      <version>2.0.7.Final</version>
+      <classifier>linux-x86_64</classifier>
     </dependency>
-    <dependency>
-      <groupId>com.google.apis</groupId>
-      <artifactId>google-api-services-pubsub</artifactId>
-      <version>v1-rev360-1.23.0</version>
-      <exclusions>
-        <exclusion>
-          <groupId>com.google.guava</groupId>
-          <artifactId>guava-jdk5</artifactId>
-        </exclusion>
-      </exclusions>
-    </dependency>
+    <!--<dependency>-->
+    <!--<groupId>com.google.apis</groupId>-->
+    <!--<artifactId>google-api-services-pubsub</artifactId>-->
+    <!--<version>v1-rev360-1.23.0</version>-->
+    <!--<exclusions>-->
+    <!--<exclusion>-->
+    <!--<groupId>com.google.guava</groupId>-->
+    <!--<artifactId>guava-jdk5</artifactId>-->
+    <!--</exclusion>-->
+    <!--</exclusions>-->
+    <!--</dependency>-->
+    <!--<dependency>-->
+    <!--<groupId>com.google.api.grpc</groupId>-->
+    <!--<artifactId>grpc-google-pubsub-v1</artifactId>-->
+    <!--<version>0.1.1</version>-->
+    <!--</dependency>-->
     <dependency>
       <groupId>com.google.api.grpc</groupId>
-      <artifactId>grpc-google-pubsub-v1</artifactId>
-      <version>0.1.1</version>
+      <artifactId>grpc-google-cloud-pubsub-v1</artifactId>
+      <version>0.5.0</version>
     </dependency>
     <dependency>
       <groupId>com.google.auth</groupId>
@@ -106,7 +116,7 @@
               <artifactSet>
                 <excludes>
                   <exclude>com.fasterxml.jackson.core:jackson-core:jar:*</exclude>
-		  <exclude>com.google.guava:*</exclude>
+                  <!--<exclude>com.google.guava:*</exclude> -->
                 </excludes>
               </artifactSet>
               <transformers>
@@ -136,9 +146,9 @@
             protobuf-java directly, you will be transitively depending on the
             protobuf-java version that grpc depends on.
           -->
-          <protocArtifact>com.google.protobuf:protoc:3.0.0-beta-2:exe:${os.detected.classifier}</protocArtifact>
+          <protocArtifact>com.google.protobuf:protoc:3.0.0-beta-2:exe:linux-x86_64</protocArtifact>
           <pluginId>grpc-java</pluginId>
-          <pluginArtifact>io.grpc:protoc-gen-grpc-java:1.6.1:exe:${os.detected.classifier}</pluginArtifact>
+          <pluginArtifact>io.grpc:protoc-gen-grpc-java:1.6.1:exe:linux-x86_64</pluginArtifact>
           <protoSourceRoot>${project.basedir}/src/main/proto</protoSourceRoot>
         </configuration>
         <executions>

@@ -48,9 +48,11 @@ import org.slf4j.LoggerFactory;
 public class CloudPubSubSinkTask extends SinkTask {
 
   private static final Logger log = LoggerFactory.getLogger(CloudPubSubSinkTask.class);
-  private static final int NUM_CPS_PUBLISHERS = 10;
+  private static final int NUM_CPS_PUBLISHERS = 5; // Marium : changed 10 to 2 to check the timeouts
   private static final int CPS_MAX_REQUEST_SIZE = (10 << 20) - 1024; // Leave room for overhead.
   private static final int CPS_MAX_MESSAGES_PER_REQUEST = 1000;
+  private static final int CPS_MESSAGE_KEY_ATTRIBUTE_SIZE =
+      ConnectorUtils.CPS_MESSAGE_KEY_ATTRIBUTE.length();
 
   // Maps a topic to another map which contains the outstanding futures per partition
   private Map<String, Map<Integer, OutstandingFuturesForPartition>> allOutstandingFutures =
@@ -61,7 +63,6 @@ public class CloudPubSubSinkTask extends SinkTask {
   private String cpsTopic;
   private String messageBodyName;
   private int maxBufferSize;
-  private boolean includeMetadata;
   private CloudPubSubPublisher publisher;
 
   /** Holds a list of the publishing futures that have not been processed for a single partition. */
@@ -100,7 +101,6 @@ public class CloudPubSubSinkTask extends SinkTask {
             validatedProps.get(ConnectorUtils.CPS_TOPIC_CONFIG));
     maxBufferSize = (Integer) validatedProps.get(CloudPubSubSinkConnector.MAX_BUFFER_SIZE_CONFIG);
     messageBodyName = (String) validatedProps.get(CloudPubSubSinkConnector.CPS_MESSAGE_BODY_NAME);
-    includeMetadata = (Boolean) validatedProps.get(CloudPubSubSinkConnector.PUBLISH_KAFKA_METADATA);
     if (publisher == null) {
       // Only do this if we did not use the constructor.
       publisher = new CloudPubSubRoundRobinPublisher(NUM_CPS_PUBLISHERS);
@@ -116,16 +116,13 @@ public class CloudPubSubSinkTask extends SinkTask {
       log.trace("Received record: " + record.toString());
       Map<String, String> attributes = new HashMap<>();
       ByteString value = handleValue(record.valueSchema(), record.value(), attributes);
+      // Get the total number of bytes in this message.
+      int messageSize = value.size(); // Assumes the topic name is in ASCII.
       if (record.key() != null) {
-        String key = record.key().toString();
-        attributes.put(ConnectorUtils.CPS_MESSAGE_KEY_ATTRIBUTE, key);
+        attributes.put(ConnectorUtils.CPS_MESSAGE_KEY_ATTRIBUTE, record.key().toString());
       }
-      if (includeMetadata) {
-        attributes.put(ConnectorUtils.KAFKA_TOPIC_ATTRIBUTE, record.topic());
-        attributes.put(ConnectorUtils.KAFKA_PARTITION_ATTRIBUTE,
-                       record.kafkaPartition().toString());
-        attributes.put(ConnectorUtils.KAFKA_OFFSET_ATTRIBUTE, Long.toString(record.kafkaOffset()));
-        attributes.put(ConnectorUtils.KAFKA_TIMESTAMP_ATTRIBUTE, record.timestamp().toString());
+      for (String key : attributes.keySet()) {
+        messageSize+= key.getBytes().length + attributes.get(key).getBytes().length;
       }
       PubsubMessage message = builder.setData(value).putAllAttributes(attributes).build();
       // Get a map containing all the unpublished messages per partition for this topic.
@@ -143,7 +140,6 @@ public class CloudPubSubSinkTask extends SinkTask {
         unpublishedMessages = new UnpublishedMessagesForPartition();
         unpublishedMessagesForTopic.put(record.kafkaPartition(), unpublishedMessages);
       }
-      int messageSize = message.getSerializedSize();
       int newUnpublishedSize = unpublishedMessages.size + messageSize;
       // Publish messages in this partition if the total number of bytes goes over limit.
       if (newUnpublishedSize > CPS_MAX_REQUEST_SIZE) {
@@ -264,73 +260,89 @@ public class CloudPubSubSinkTask extends SinkTask {
 
   @Override
   public void flush(Map<TopicPartition, OffsetAndMetadata> partitionOffsets) {
-    log.debug("Flushing...");
-    // Publish all messages that have not been published yet.
-    for (Map.Entry<String, Map<Integer, UnpublishedMessagesForPartition>> entry :
-        allUnpublishedMessages.entrySet()) {
-      for (Map.Entry<Integer, UnpublishedMessagesForPartition> innerEntry :
-          entry.getValue().entrySet()) {
-        publishMessagesForPartition(
-            entry.getKey(), innerEntry.getKey(), innerEntry.getValue().messages);
-      }
-    }
-    allUnpublishedMessages.clear();
-    // Process results of all the outstanding futures specified by each TopicPartition.
-    for (Map.Entry<TopicPartition, OffsetAndMetadata> partitionOffset :
-        partitionOffsets.entrySet()) {
-      log.trace("Received flush for partition " + partitionOffset.getKey().toString());
-      Map<Integer, OutstandingFuturesForPartition> outstandingFuturesForTopic =
-          allOutstandingFutures.get(partitionOffset.getKey().topic());
-      if (outstandingFuturesForTopic == null) {
-        continue;
-      }
-      OutstandingFuturesForPartition outstandingFutures =
-          outstandingFuturesForTopic.get(partitionOffset.getKey().partition());
-      if (outstandingFutures == null) {
-        continue;
-      }
-      try {
-        for (ListenableFuture<PublishResponse> publishFuture : outstandingFutures.futures) {
-          publishFuture.get();
+    try {
+      log.debug("Flushing...");
+      // Publish all messages that have not been published yet.
+      for (Map.Entry<String, Map<Integer, UnpublishedMessagesForPartition>> entry :
+              allUnpublishedMessages.entrySet()) {
+        for (Map.Entry<Integer, UnpublishedMessagesForPartition> innerEntry :
+                entry.getValue().entrySet()) {
+          publishMessagesForPartition(
+                  entry.getKey(), innerEntry.getKey(), innerEntry.getValue().messages);
         }
-      } catch (Exception e) {
-        throw new RuntimeException(e);
       }
+      allUnpublishedMessages.clear();
+      // Process results of all the outstanding futures specified by each TopicPartition.
+      for (Map.Entry<TopicPartition, OffsetAndMetadata> partitionOffset :
+              partitionOffsets.entrySet()) {
+        log.trace("Received flush for partition " + partitionOffset.getKey().toString());
+        Map<Integer, OutstandingFuturesForPartition> outstandingFuturesForTopic =
+                allOutstandingFutures.get(partitionOffset.getKey().topic());
+        if (outstandingFuturesForTopic == null) {
+          continue;
+        }
+        OutstandingFuturesForPartition outstandingFutures =
+                outstandingFuturesForTopic.get(partitionOffset.getKey().partition());
+        if (outstandingFutures == null) {
+          continue;
+        }
+        try {
+          for (ListenableFuture<PublishResponse> publishFuture : outstandingFutures.futures) {
+            publishFuture.get();
+          }
+        } catch (Exception e) {
+          log.error("Cleared outstanding");
+          // Marium : Done to avoid multiple retries in case of Goaway.
+       //  System.out.println(  allOutstandingFutures.keySet().);
+          allOutstandingFutures.clear();
+          log.error("Exception", e);
+         // throw new RuntimeException(e);
+        }
+      }
+      allOutstandingFutures.clear();
+    } catch (Exception e) {
+      log.error(" Exception in flush", e);
+      throw e;
     }
-    allOutstandingFutures.clear();
   }
 
 
   /** Publish all the messages in a partition and store the Future's for each publish request. */
   private void publishMessagesForPartition(
       String topic, Integer partition, List<PubsubMessage> messages) {
-    // Get a map containing all futures per partition for the passed in topic.
-    Map<Integer, OutstandingFuturesForPartition> outstandingFuturesForTopic =
-        allOutstandingFutures.get(topic);
-    if (outstandingFuturesForTopic == null) {
-      outstandingFuturesForTopic = new HashMap<>();
-      allOutstandingFutures.put(topic, outstandingFuturesForTopic);
+    try {
+      // Get a map containing all futures per partition for the passed in topic.
+      Map<Integer, OutstandingFuturesForPartition> outstandingFuturesForTopic =
+              allOutstandingFutures.get(topic);
+      if (outstandingFuturesForTopic == null) {
+        outstandingFuturesForTopic = new HashMap<>();
+        allOutstandingFutures.put(topic, outstandingFuturesForTopic);
+      }
+      // Get the object containing the outstanding futures for this topic and partition..
+      OutstandingFuturesForPartition outstandingFutures = outstandingFuturesForTopic.get(partition);
+      if (outstandingFutures == null) {
+        outstandingFutures = new OutstandingFuturesForPartition();
+        outstandingFuturesForTopic.put(partition, outstandingFutures);
+      }
+      int startIndex = 0;
+      int endIndex = Math.min(CPS_MAX_MESSAGES_PER_REQUEST, messages.size());
+      PublishRequest.Builder builder = PublishRequest.newBuilder();
+      // Publish all the messages for this partition in batches.
+      while (startIndex < messages.size()) {
+        PublishRequest request =
+                builder.setTopic(cpsTopic).addAllMessages(messages.subList(startIndex, endIndex)).build();
+        builder.clear();
+        log.debug("Publishing: " + (endIndex - startIndex) + " messages");
+        outstandingFutures.futures.add(publisher.publish(request));
+        startIndex = endIndex;
+        endIndex = Math.min(endIndex + CPS_MAX_MESSAGES_PER_REQUEST, messages.size());
+      }
+      messages.clear();
+      log.debug("After clear:");
+    } catch ( Exception e) {
+      log.error(" Exception in publishMessagesForPartition ", e);
+      throw e;
     }
-    // Get the object containing the outstanding futures for this topic and partition..
-    OutstandingFuturesForPartition outstandingFutures = outstandingFuturesForTopic.get(partition);
-    if (outstandingFutures == null) {
-      outstandingFutures = new OutstandingFuturesForPartition();
-      outstandingFuturesForTopic.put(partition, outstandingFutures);
-    }
-    int startIndex = 0;
-    int endIndex = Math.min(CPS_MAX_MESSAGES_PER_REQUEST, messages.size());
-    PublishRequest.Builder builder = PublishRequest.newBuilder();
-    // Publish all the messages for this partition in batches.
-    while (startIndex < messages.size()) {
-      PublishRequest request =
-          builder.setTopic(cpsTopic).addAllMessages(messages.subList(startIndex, endIndex)).build();
-      builder.clear();
-      log.trace("Publishing: " + (endIndex - startIndex) + " messages");
-      outstandingFutures.futures.add(publisher.publish(request));
-      startIndex = endIndex;
-      endIndex = Math.min(endIndex + CPS_MAX_MESSAGES_PER_REQUEST, messages.size());
-    }
-    messages.clear();
   }
 
   @Override

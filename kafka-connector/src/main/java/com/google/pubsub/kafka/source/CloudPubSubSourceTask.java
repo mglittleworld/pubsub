@@ -58,7 +58,6 @@ public class CloudPubSubSourceTask extends SourceTask {
   private String kafkaTopic;
   private String cpsSubscription;
   private String kafkaMessageKeyAttribute;
-  private String kafkaMessageTimestampAttribute;
   private int kafkaPartitions;
   private PartitionScheme kafkaPartitionScheme;
   private int cpsMaxBatchSize;
@@ -68,7 +67,6 @@ public class CloudPubSubSourceTask extends SourceTask {
   private Set<String> ackIds = Collections.synchronizedSet(new HashSet<String>());
   private CloudPubSubSubscriber subscriber;
   private Set<String> ackIdsInFlight = Collections.synchronizedSet(new HashSet<String>());
-  private final Set<String> standardAttributes = new HashSet<>();
 
   public CloudPubSubSourceTask() {}
 
@@ -97,8 +95,6 @@ public class CloudPubSubSourceTask extends SourceTask {
         (Integer) validatedProps.get(CloudPubSubSourceConnector.KAFKA_PARTITIONS_CONFIG);
     kafkaMessageKeyAttribute =
         (String) validatedProps.get(CloudPubSubSourceConnector.KAFKA_MESSAGE_KEY_CONFIG);
-    kafkaMessageTimestampAttribute =
-        (String) validatedProps.get(CloudPubSubSourceConnector.KAFKA_MESSAGE_TIMESTAMP_CONFIG);
     kafkaPartitionScheme =
         PartitionScheme.getEnum(
             (String) validatedProps.get(CloudPubSubSourceConnector.KAFKA_PARTITION_SCHEME_CONFIG));
@@ -106,8 +102,6 @@ public class CloudPubSubSourceTask extends SourceTask {
       // Only do this if we did not set through the constructor.
       subscriber = new CloudPubSubRoundRobinSubscriber(NUM_CPS_SUBSCRIBERS);
     }
-    standardAttributes.add(kafkaMessageKeyAttribute);
-    standardAttributes.add(kafkaMessageTimestampAttribute);
     log.info("Started a CloudPubSubSourceTask.");
   }
 
@@ -137,17 +131,14 @@ public class CloudPubSubSourceTask extends SourceTask {
         ackIds.add(ackId);
         Map<String, String> messageAttributes = message.getAttributes();
         String key = messageAttributes.get(kafkaMessageKeyAttribute);
-        Long timestamp = getLongValue(messageAttributes.get(kafkaMessageTimestampAttribute));
-        if (timestamp == null){
-          timestamp = Timestamps.toMillis(message.getPublishTime());
-        }
         ByteString messageData = message.getData();
         byte[] messageBytes = messageData.toByteArray();
 
-        boolean hasCustomAttributes = !standardAttributes.containsAll(messageAttributes.keySet());
+        boolean hasAttributes =
+            messageAttributes.size() > 1 || (messageAttributes.size() > 0 && key == null);
 
         SourceRecord record = null;
-        if (hasCustomAttributes) {
+        if (hasAttributes) {
           SchemaBuilder valueSchemaBuilder = SchemaBuilder.struct().field(
               ConnectorUtils.KAFKA_MESSAGE_CPS_BODY_FIELD,
               Schema.BYTES_SCHEMA);
@@ -181,7 +172,7 @@ public class CloudPubSubSourceTask extends SourceTask {
                 key,
                 valueSchema,
                 value,
-                timestamp);
+                Timestamps.toMillis(message.getPublishTime()));
         } else {
           record =
             new SourceRecord(
@@ -193,7 +184,7 @@ public class CloudPubSubSourceTask extends SourceTask {
                 key,
                 Schema.BYTES_SCHEMA,
                 messageBytes,
-                timestamp);
+                Timestamps.toMillis(message.getPublishTime()));
         }
         sourceRecords.add(record);
       }
@@ -253,18 +244,6 @@ public class CloudPubSubSourceTask extends SourceTask {
       currentRoundRobinPartition = ++currentRoundRobinPartition % kafkaPartitions;
       return currentRoundRobinPartition;
     }
-  }
-
-  private Long getLongValue(String timestamp) {
-    if (timestamp == null) {
-      return null;
-    }
-    try {
-      return Long.valueOf(timestamp);
-    } catch (NumberFormatException e) {
-      log.error("Error while converting `{}` to number", timestamp, e);
-    }
-    return null;
   }
 
   @Override
